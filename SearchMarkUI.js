@@ -24,8 +24,11 @@
 $(document).ready(
     function()
     {
+        if (localStorage['uivisits'] === undefined) {
+            localStorage['uivisits'] = '0';
+        }
         // Listen for search results from backend
-        chrome.extension.onConnect.addListener(function(port) {
+        chrome.runtime.onConnect.addListener(function(port) {
             if(port.name != "uiToBackend") {
                 console.log("Invalid port name: " + port.name);
                 return;
@@ -60,7 +63,7 @@ $(document).ready(
 
 // Send request to backend for displaying a cached bookmark page
 function requestCachedPage(id) {
-    chrome.extension.sendRequest(
+    chrome.runtime.sendMessage(
         {method: 'cached', bookmarkid: id},
         function() {});
 }
@@ -90,7 +93,7 @@ function doSearch(searchwords) {
         leavePage(resultspagename);
     });
 
-    chrome.extension.sendRequest(
+    chrome.runtime.sendMessage(
         {method: 'search', keywords: searchwords},
         function() {});
 }

@@ -1,10 +1,36 @@
-<html>
-<head>
+// parseUri 1.2.2
+// (c) Steven Levithan <stevenlevithan.com>
+// MIT License
 
-<script type="text/javascript" src="libs/parseuri.js"></script>
+function parseUri (str) {
+    var	o   = parseUri.options,
+        m   = o.parser[o.strictMode ? "strict" : "loose"].exec(str),
+        uri = {},
+        i   = 14;
 
-<script language="Javascript" type="text/javascript">
-    
+    while (i--) uri[o.key[i]] = m[i] || "";
+
+    uri[o.q.name] = {};
+    uri[o.key[12]].replace(o.q.parser, function ($0, $1, $2) {
+        if ($1) uri[o.q.name][$1] = $2;
+    });
+
+    return uri;
+};
+
+parseUri.options = {
+    strictMode: false,
+    key: ["source","protocol","authority","userInfo","user","password","host","port","relative","path","directory","file","query","anchor"],
+    q:   {
+        name:   "queryKey",
+        parser: /(?:^|&)([^&=]*)=?([^&]*)/g
+    },
+    parser: {
+        strict: /^(?:([^:\/?#]+):)?(?:\/\/((?:(([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(?::(\d*))?))?((((?:[^?#\/]*\/)*)([^?#]*))(?:\?([^#]*))?(?:#(.*))?)/,
+        loose:  /^(?:(?![^:@]+:[^:@\/]*@)([^:\/?#.]+):)?(?:\/\/)?((?:(([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(?::(\d*))?)(((\/(?:[^?#](?![^?#\/]*\.[^?#\/.]+(?:[?#]|$)))*\/?)?([^?#\/]*))(?:\?([^#]*))?(?:#(.*))?)/
+    }
+};
+
 // background.html: SearchMark back-end
 //
 // Copyright (C) 2010  Akshay Dua, and Candy Yiu
@@ -13,7 +39,7 @@
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-    
+
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -21,7 +47,7 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see http://www.gnu.org/licenses/.
-  
+
 // =============== GLOBALS ==============
 
 // Bookmarked page database
@@ -40,35 +66,29 @@ var uiContextLen = -30;
 
 // Open the database
 SearchMarkDB.db = null;
-SearchMarkDB.open = function()
-{
-    var dbSize = 200 * 1024 * 1024; // 200 MB
-    SearchMarkDB.db =
-        openDatabase('SearchMarkDB', '1.0', 'Bookmark Page Storage', dbSize);
-}
+// SearchMarkDB.open = function()
+// {
+//     var dbSize = 200 * 1024 * 1024; // 200 MB
+//     SearchMarkDB.db =
+//         openDatabase('SearchMarkDB', '1.0', 'Bookmark Page Storage', dbSize);
+// }
 
 // create the table that stores all the bookmark
 // info, including the associated pages.
 SearchMarkDB.createTable =
-    function() 
+    function()
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('CREATE VIRTUAL TABLE pages ' + 
-                          'USING fts3(id INTEGER PRIMARY KEY, ' + 
-                          'url TEXT, title TEXT, page TEXT, ' + 
-                          'time INTEGER, img TEXT)',
-                          [],
-                          getCallback("create table", "pages", 1),
-                          getCallback("create table", "pages", 0));
-
-            tx.executeSql('CREATE TABLE IF NOT EXISTS ' + 
-                          'rawpages (id INTEGER PRIMARY KEY, htmlpage TEXT)',
-                          [],
-                          getCallback("create table", "rawpages", 1),
-                          getCallback("create table", "rawpages", 0));
-        });
+    // chrome.storage.local is object-based, no tables
+    // initialize 'pages' array if not exists
+    chrome.storage.local.get('pages', function(items) {
+        if (!items.pages) {
+            chrome.storage.local.set({ 'pages': [] }, function() {
+                console.log('Pages storage initialized.');
+            });
+        } else {
+            console.log('Pages storage already exists.');
+        }
+    });
 }
 
 // add a bookmark and associated page to the database
@@ -76,45 +96,34 @@ SearchMarkDB.addBookmarkedPage =
     function(newId, newUrl, newTitle, newPlainPage, newTime,
              newPageImg, newHtmlPage)
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            // html-free page for searching
-            tx.executeSql('INSERT INTO pages(id, url, title, page, ' +
-                          'time, img) VALUES (?,?,?,?,?,?)',
-                          [ newId, newUrl, newTitle, newPlainPage,
-                            newTime, newPageImg ],
-                          getCallback("insert page", newId + " " +
-                                      newUrl, 1), 
-                          getCallback("insert page", newId + " " +
-                                      newUrl, 0));
-
-            // html page for showing cached version
-            tx.executeSql('INSERT INTO rawpages(id, htmlpage) ' +
-                          'VALUES (?,?)', 
-                          [newId, newHtmlPage ], 
-                          getCallback("insert page raw", newId +
-                                      " " + newUrl, 1),  
-                          getCallback("insert page raw", newId +
-                                      " " + newUrl, 0)); 
+    chrome.storage.local.get('pages', function(items) {
+        var pages = items.pages;
+        pages.push({
+            id: newId,
+            url: newUrl,
+            title: newTitle,
+            page: newPlainPage,
+            time: newTime,
+            img: newPageImg,
+            htmlpage: newHtmlPage
         });
+        chrome.storage.local.set({ 'pages': pages }, function() {
+            console.log('Page added to storage: ' + newUrl);
+        });
+    });
 }
 
 // remove a bookmarked page from the database
 SearchMarkDB.removeBookmarkedPage =
     function(theId)
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('DELETE FROM pages WHERE id=?', [ theId ], 
-                          getCallback("remove page", theId, 1), 
-                          getCallback("remove page", theId, 0));
-
-            tx.executeSql('DELETE FROM rawpages WHERE id=?', [ theId ], 
-                          getCallback("remove page raw", theId, 1), 
-                          getCallback("remove page raw", theId, 0));
+    chrome.storage.local.get('pages', function(items) {
+        var pages = items.pages;
+        var newPages = pages.filter(page => page.id != theId);
+        chrome.storage.local.set({ 'pages': newPages }, function() {
+            console.log('Page removed from storage: ' + theId);
         });
+    });
 }
 
 // update an already stored bookmarked page
@@ -122,21 +131,26 @@ SearchMarkDB.updateBookmarkedPage =
     function(theId, theUrl, theTitle, thePlainPage, theTime,
              thePageImg, theHtmlPage)
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('UPDATE pages SET url=?, ' + 
-                          'title=?, page=?, img=? WHERE id=?',
-                          [ theUrl, theTitle, thePlainPage,
-                            thePageImg, theId ],
-                          getCallback("update bookmark", theUrl, 1),
-                          getCallback("update bookmark", theUrl, 0));
-
-            tx.executeSql('UPDATE rawpages SET htmlpage=? WHERE id=?',
-                          [ theHtmlPage, theId ],
-                          getCallback("update bookmark", "raw " + theUrl, 1),
-                          getCallback("update bookmark", "raw " + theUrl, 0));
+    chrome.storage.local.get('pages', function(items) {
+        var pages = items.pages;
+        var updatedPages = pages.map(page => {
+            if (page.id == theId) {
+                return {
+                    id: theId,
+                    url: theUrl,
+                    title: theTitle,
+                    page: thePlainPage,
+                    time: theTime,
+                    img: thePageImg,
+                    htmlpage: theHtmlPage
+                };
+            }
+            return page;
         });
+        chrome.storage.local.set({ 'pages': updatedPages }, function() {
+            console.log('Page updated in storage: ' + theUrl);
+        });
+    });
 }
 
 // get all bookmark URLs. Callback function can
@@ -144,88 +158,79 @@ SearchMarkDB.updateBookmarkedPage =
 SearchMarkDB.getStoredBookmarks =
     function()
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('SELECT id,url,title FROM pages',
-                          [],
-                          getCallback("show db", "pages", 1),
-                          getCallback("show db", "pages", 0));
-
-            tx.executeSql('SELECT id FROM rawpages',
-                          [],
-                          getCallback("show db", "raw", 1),
-                          getCallback("show db", "raw", 0));
-        });
+    chrome.storage.local.get('pages', function(items) {
+        var pages = items.pages;
+        if (pages) {
+            // Process and return bookmarks, for example:
+            console.log('Retrieved bookmarks from storage:', pages);
+            // You might want to pass these bookmarks to a callback
+            // or store them in a way that the rest of the code can use.
+            // For now, just logging them.
+        } else {
+            console.log('No bookmarks found in storage.');
+        }
+    });
 }
 
 // Supports the cached page feature. Returns cached raw html page.
-SearchMarkDB.getRawHtmlPage = 
+SearchMarkDB.getRawHtmlPage =
     function (id, callback)
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('SELECT htmlpage FROM rawpages ' +
-                          'WHERE id = ?',
-                          [id],
-                          callback,
-                          getCallback("get page", "raw", 0));
-        });
+    chrome.storage.local.get('pages', function(items) {
+        var pages = items.pages;
+        var page = pages.find(p => p.id == id);
+        if (page) {
+            callback(null, { rows: [{ item: () => ({ htmlpage: page.htmlpage }) }] }); // Simulate SQL result
+        } else {
+            callback(null, { rows: [] });
+        }
+    });
 }
 
 SearchMarkDB.doSearch =
     function(callback, keywords)
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('SELECT id,url,title, img, ' + 
-                          'snippet(pages, "' + uiHighlightStart +
-                          '", "' + uiHighlightEnd + 
-                          '", "' + uiEllipses +
-                          '", -1, ' + uiContextLen + ') ' +
-                          'as snippet FROM pages WHERE ' + 
-                          'pages MATCH ' + keywords + ' ' +
-                          'ORDER BY time DESC',
-                          [],
-                          callback,
-                          getCallback("search pages", "malformed input", 0));
-        });
+    chrome.storage.local.get('pages', function(items) {
+        var pages = items.pages;
+        if (pages) {
+            var results = pages.filter(page => {
+                // Basic keyword search - improve as needed
+                const text = (page.title + ' ' + page.url + ' ' + page.page).toLowerCase();
+                return keywords.toLowerCase().split(' ').every(keyword => text.includes(keyword));
+            }).map(page => {
+                // Create snippet - this is a simplified version
+                const snippet = page.page.substring(0, 100) + '...'; // Example snippet
+                return {
+                    id: page.id,
+                    url: page.url,
+                    title: page.title,
+                    img: page.img,
+                    snippet: snippet // Using basic snippet for now
+                };
+            });
+            callback(null, { rows: results.map(result => ({ item: () => result })) }); // Simulate SQL result
+        } else {
+            callback(null, { rows: [] });
+        }
+    });
 }
 
 // clear all stored information.
 SearchMarkDB.clear =
     function()
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-            tx.executeSql('DELETE FROM pages', [], 
-                          getCallback("clear table", "pages", 1), 
-                          getCallback("clear table", "pages", 0));
-
-            tx.executeSql('DELETE FROM rawpages', [], 
-                          getCallback("clear table", "rawpages", 1), 
-                          getCallback("clear table", "rawpages", 0));
-        });
+    chrome.storage.local.remove('pages', function() {
+        console.log('Pages storage cleared.');
+    });
 }
 
 // remove the table and all stored information
 SearchMarkDB.purge =
     function()
 {
-    SearchMarkDB.db.transaction(
-        function(tx)
-        {
-          tx.executeSql('DROP TABLE pages', [], 
-                        getCallback("delete table", "pages", 1), 
-                        getCallback("delete table", "pages", 0));
-
-          tx.executeSql('DROP TABLE rawpages', [], 
-                        getCallback("delete table", "rawpages", 1), 
-                        getCallback("delete table", "rawpages", 0));
-        });
+    chrome.storage.local.clear(function() {
+        console.log('All storage cleared (purge).');
+    });
 }
 
 // ========================== CORE ===============
@@ -233,8 +238,8 @@ SearchMarkDB.purge =
 // prepare to initialize
 
 // open the database each time extension loads.
-SearchMarkDB.open();
-console.debug("Opened SearchMark database.");
+// SearchMarkDB.open(); // No longer needed for chrome.storage.local
+console.debug("Using chrome.storage.local for storage.");
 
 localStorage['newversion'] = 2.5;
 
@@ -243,10 +248,10 @@ if(!localStorage['oldversion'])
 { // not defined
 
     // set to a version before upgrade functionality ever existed
-    localStorage['oldversion'] = 1.1; 
+    localStorage['oldversion'] = 1.1;
 }
 
-if(localStorage['newversion'] > localStorage['oldversion']) 
+if(localStorage['newversion'] > localStorage['oldversion'])
 {
     // will not be true for new installs
     if(localStorage['initialized'])
@@ -265,8 +270,8 @@ init();
 chrome.browserAction.onClicked.addListener(
     function(tab)
     {
-        chrome.tabs.create( 
-            {'url' : 'SearchMarkUI.html'}, 
+        chrome.tabs.create(
+            {'url' : 'SearchMarkUI.html'},
             function(newTab) {});
     });
 
@@ -278,8 +283,8 @@ chrome.bookmarks.onChanged.addListener(
         if (!localStorage['initialized'])
             return;
 
-        getAndStoreBookmarkContent( 
-            {id : id, 
+        getAndStoreBookmarkContent(
+            {id : id,
              url : changeInfo.url,
              title : changeInfo.title,
              time : 0},
@@ -293,8 +298,8 @@ chrome.bookmarks.onCreated.addListener(
 
         if (!localStorage['initialized'])
             return;
-        
-        getAndStoreBookmarkContent( 
+
+        getAndStoreBookmarkContent(
             {id : id,
              url : newBookmark.url,
              title : newBookmark.title,
@@ -336,11 +341,11 @@ function init()
     // initialize once only. Populate the database
     // by retrieving and storing bookmarked pages, and
     // URLs.
-    if (!localStorage['initialized'] || 
-        localStorage['initialized'] == 0) 
+    if (!localStorage['initialized'] ||
+        localStorage['initialized'] == 0)
     {
         SearchMarkDB.createTable();
-        
+
         chrome.bookmarks.getTree(
             function(bookmarks)
             {
@@ -356,7 +361,7 @@ function init()
     } else {
         localStorage['initialized']++;
     }
-    
+
     // debug and test
     // getUrlContent("http://www.sqlite.org/lang_altertable.html");
 }
@@ -390,9 +395,9 @@ function handleRequest(request, sender, callback)
 
         console.debug("search " + request.keywords);
 
-        SearchMarkDB.doSearch(searchBookmarkedPagesCb, 
+        SearchMarkDB.doSearch(searchBookmarkedPagesCb,
                               "'" + request.keywords + "'");
-        
+
         callback();
     } else if (request.method == 'cached') {
         SearchMarkDB.getRawHtmlPage(request.bookmarkid, displayRawPage);
@@ -410,13 +415,13 @@ function displayRawPage(tx, r)
     if(r.rows.length) {
 
         chrome.tabs.create(
-            {url: 'rawPageView.html', selected: true}, 
+            {url: 'rawPageView.html', selected: true},
             function (tab)
             {
                 // connect to tab that will show the raw page
                 var port = chrome.extension.connect({name:
                 "rawPageView"});
-                
+
                 // send the raw page
                 port.postMessage(r.rows.item(0).htmlpage);
 
@@ -425,8 +430,8 @@ function displayRawPage(tx, r)
             });
 
     } else {
-        console.log("Unexpected error: this page should have " + 
-                    "been cached. Please file a bug report " + 
+        console.log("Unexpected error: this page should have " +
+                    "been cached. Please file a bug report " +
                     "at <todo:put github url here>");
     }
 }
@@ -512,7 +517,7 @@ function extractPageImg(page, url)
     // malformed img tag
     if(srcstart == -1)
         return "";
-    
+
     var quote = '"';
 
     srcstart = page.indexOf(quote, srcstart);
@@ -628,8 +633,8 @@ function initBookmarkDatabase(bookmarks)
     bookmarks.forEach(
         function(bookmark)
         {
-            if (bookmark.url && 
-                bookmark.url.match("^https?://*")) 
+            if (bookmark.url &&
+                bookmark.url.match("^https?://*"))
             { // url exists and is well formed
 
                 console.debug("Adding " + bookmark.url);
@@ -664,7 +669,7 @@ function getCallback(cbname, msg, type)
         {
             console.debug("failed: " + cbname + " " + msg);
             console.log("  " + e.message);
-        }            
+        }
         break;
     case "search pages":
         if (type == 1) // success callback
@@ -734,6 +739,3 @@ function getCallback(cbname, msg, type)
         }
     }
 }
-</script>
-</head>
-</html>
